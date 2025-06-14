@@ -1,132 +1,185 @@
 import logging
 import os
-from aiogram import Bot, Dispatcher, types, F
+from datetime import datetime, timedelta
+from aiogram import Bot, Dispatcher, executor, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.enums import ParseMode
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.filters import CommandStart
-from aiogram.client.default import DefaultBotProperties
+from aiogram.dispatcher import FSMContext
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher.filters.state import State, StatesGroup
 from dotenv import load_dotenv
-from questionnaire import JobForm
 
-# Загрузка переменных окружения
 load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
-# Проверка наличия токена
-if not TOKEN:
-    raise ValueError("BOT_TOKEN не задан в .env файле")
-
-# Инициализация бота и диспетчера
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher(storage=MemoryStorage())
-
-# Логгирование
 logging.basicConfig(level=logging.INFO)
 
-# Команда /start
-@dp.message(CommandStart())
-async def start(message: types.Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Заполнить анкету на трудоустройство", callback_data="start_form")]
-    ])
-    await message.answer("👋 Добро пожаловать! Нажмите кнопку ниже, чтобы заполнить анкету:", reply_markup=kb)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot, storage=MemoryStorage())
 
-# Старт формы
-@dp.callback_query(F.data == "start_form")
-async def show_info(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer(
-        "<b>🇳🇱 РАБОТА В НИДЕРЛАНДАХ И БЕЛЬГИИ 🇧🇪</b>\n"
-        "Надёжная работа в Европе с официальным оформлением и полной поддержкой на каждом этапе!\n"
-        "Компания «Срезанные цветы II» — это:\n"
-        "✅ Лицензированное агентство\n"
-        "✅ Опыт более 10 лет\n"
-        "✅ Официальные контракты\n"
-        "✅ Полное сопровождение\n"
-        "🌷 <b>ВАКАНСИИ:</b>\n"
-        "— Нидерланды (цветы, капуста, лук)\n"
-        "— Бельгия (строительство)\n"
-        "📄 Полный комплект документов\n"
-        "💬 Английский не обязателен\n"
-        "👫 Приглашаем женщин до 45, мужчин до 50, пары\n"
-        "💰 ЗП: от 21,62 zł (Польша) и 14,06 € (Нидерланды)\n"
-        "❗ Официально. По визе. Безопасно.\n",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👉 Введите свои данные", callback_data="form_country")]
-        ])
+# ----- Тексты на двух языках -----
+TEXTS = {
+    'ru': {
+        'welcome': "👋 Добро пожаловать!\nНажмите кнопку ниже, чтобы заполнить анкету на трудоустройство:",
+        'choose_country': "3️⃣ В какую страну вы хотите поехать на работу?",
+        'arrival_date': "4️⃣ Когда вы готовы приехать в Польшу на оформление? (не раньше чем через 8 дней от сегодня, формат: ГГГГ-ММ-ДД)",
+        'age': "5️⃣ Сколько вам полных лет?",
+        'citizenship': "6️⃣ Какое у вас гражданство?",
+        'documents': "7️⃣ Какие документы у вас уже готовы или вы только планируете приехать в Европу?",
+        'contact': "8️⃣ Оставьте контактные данные (номер телефона, Telegram, WhatsApp и т.д.):",
+        'thank_you': "✅ Ваша анкета отправлена менеджерам. Мы с вами скоро свяжемся!",
+        'invalid_date': "❗ Дата должна быть не раньше, чем через 8 дней. Введите дату в формате ГГГГ-ММ-ДД.",
+        'job_info': "🇳🇱 РАБОТА В НИДЕРЛАНДАХ И БЕЛЬГИИ 🇧🇪\n\nНадёжная работа в Европе с официальным оформлением и полной поддержкой!\n✅ Лицензированное агентство\n✅ Более 10 лет опыта\n✅ Легальная работа по контракту\n...\n📅 Подготовка документов: 5–14 рабочих дней\n❗ Всё официально. Виза обязательна.\n",
+    },
+    'ua': {
+        'welcome': "👋 Ласкаво просимо!\nНатисніть кнопку нижче, щоб заповнити анкету на працевлаштування:",
+        'choose_country': "3️⃣ В яку країну ви хочете поїхати на роботу?",
+        'arrival_date': "4️⃣ Коли ви готові приїхати до Польщі на оформлення? (не раніше ніж через 8 днів від сьогодні, формат: РРРР-ММ-ДД)",
+        'age': "5️⃣ Скільки вам повних років?",
+        'citizenship': "6️⃣ Яке у вас громадянство?",
+        'documents': "7️⃣ Які документи у вас вже готові або ви тільки плануєте приїхати до Європи?",
+        'contact': "8️⃣ Залиште контактні дані (телефон, Telegram, WhatsApp тощо):",
+        'thank_you': "✅ Ваша анкета відправлена менеджерам. Ми з вами скоро зв'яжемось!",
+        'invalid_date': "❗ Дата має бути не раніше ніж через 8 днів. Введіть дату у форматі РРРР-ММ-ДД.",
+        'job_info': "🇳🇱 РОБОТА В НІДЕРЛАНДАХ І БЕЛЬГІЇ 🇧🇪\n\nНадійна робота в Європі з офіційним оформленням!\n✅ Ліцензоване агентство\n✅ 10+ років досвіду\n✅ Легальна робота за контрактом\n...\n📅 Підготовка документів: 5–14 робочих днів\n❗ Все офіційно. Віза обов'язкова.\n",
+    }
+}
+
+# ----- Состояния анкеты -----
+class Form(StatesGroup):
+    country = State()
+    arrival_date = State()
+    age = State()
+    citizenship = State()
+    documents = State()
+    contact = State()
+
+# ----- /start -----
+@dp.message_handler(commands='start')
+async def start_cmd(message: types.Message, state: FSMContext):
+    kb = InlineKeyboardMarkup()
+    kb.add(
+        InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"),
+        InlineKeyboardButton("🇺🇦 Українська", callback_data="lang_ua")
     )
+    await message.answer("👋 Добро пожаловать!\nВыберите язык / Оберіть мову:", reply_markup=kb)
 
-# Выбор страны
-@dp.callback_query(F.data == "form_country")
-async def ask_country(callback: types.CallbackQuery, state: FSMContext):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇳🇱 Нидерланды — Сельское хозяйство", callback_data="nl_agro")],
-        [InlineKeyboardButton(text="🇧🇪 Бельгия — Строительство", callback_data="be_construction")]
-    ])
-    await callback.message.answer("3️⃣ В какую страну вы хотите поехать на работу?", reply_markup=kb)
+# ----- Выбор языка -----
+@dp.callback_query_handler(lambda c: c.data.startswith("lang_"))
+async def set_language(callback_query: types.CallbackQuery, state: FSMContext):
+    lang = callback_query.data.split("_")[1]
+    await state.update_data(lang=lang)
 
-@dp.callback_query(F.data.in_({"nl_agro", "be_construction"}))
-async def country_selected(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(country=callback.data)
-    await callback.message.answer("4️⃣ Когда вы готовы приехать в Польшу на оформление?\n(не раньше чем через 8 дней)")
-    await state.set_state(JobForm.arrival_date)
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("📝 Заполнить анкету / Заповнити анкету", callback_data="fill_form"))
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, TEXTS[lang]['welcome'], reply_markup=kb)
 
-@dp.message(JobForm.arrival_date)
+# ----- Показ описания вакансий -----
+@dp.callback_query_handler(lambda c: c.data == "fill_form")
+async def show_job_info(callback_query: types.CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    lang = user_data.get("lang", "ru")
+
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🖊 Ввести свои данные / Ввести свої дані", callback_data="start_survey"))
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, TEXTS[lang]['job_info'], reply_markup=kb)
+
+# ----- Начало анкеты -----
+@dp.callback_query_handler(lambda c: c.data == "start_survey")
+async def ask_country(callback_query: types.CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    lang = user_data.get("lang", "ru")
+
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("🇳🇱 Нидерланды – Сельское хоз.", callback_data="Нидерланды - СХ"),
+        InlineKeyboardButton("🇧🇪 Бельгия – Строительство", callback_data="Бельгия - Стройка")
+    )
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, TEXTS[lang]['choose_country'], reply_markup=kb)
+    await Form.country.set()
+
+@dp.callback_query_handler(state=Form.country)
+async def ask_arrival(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.update_data(country=callback_query.data)
+    user_data = await state.get_data()
+    lang = user_data.get("lang", "ru")
+
+    await bot.send_message(callback_query.from_user.id, TEXTS[lang]['arrival_date'])
+    await Form.arrival_date.set()
+
+@dp.message_handler(state=Form.arrival_date)
 async def ask_age(message: types.Message, state: FSMContext):
-    await state.update_data(arrival_date=message.text)
-    await message.answer("5️⃣ Сколько вам полных лет?")
-    await state.set_state(JobForm.age)
+    user_data = await state.get_data()
+    lang = user_data.get("lang", "ru")
 
-@dp.message(JobForm.age)
+    try:
+        input_date = datetime.strptime(message.text.strip(), "%Y-%m-%d").date()
+        min_date = datetime.now().date() + timedelta(days=8)
+        if input_date < min_date:
+            raise ValueError
+    except ValueError:
+        await message.answer(TEXTS[lang]['invalid_date'])
+        return
+
+    await state.update_data(arrival_date=str(input_date))
+    await message.answer(TEXTS[lang]['age'])
+    await Form.age.set()
+
+@dp.message_handler(state=Form.age)
 async def ask_citizenship(message: types.Message, state: FSMContext):
     await state.update_data(age=message.text)
-    await message.answer("6️⃣ Какое у вас гражданство?")
-    await state.set_state(JobForm.citizenship)
+    user_data = await state.get_data()
+    lang = user_data.get("lang", "ru")
 
-@dp.message(JobForm.citizenship)
+    await message.answer(TEXTS[lang]['citizenship'])
+    await Form.citizenship.set()
+
+@dp.message_handler(state=Form.citizenship)
 async def ask_documents(message: types.Message, state: FSMContext):
     await state.update_data(citizenship=message.text)
-    await message.answer("7️⃣ Какие документы у вас уже готовы или вы только планируете приехать в Европу?")
-    await state.set_state(JobForm.documents)
+    user_data = await state.get_data()
+    lang = user_data.get("lang", "ru")
 
-@dp.message(JobForm.documents)
+    await message.answer(TEXTS[lang]['documents'])
+    await Form.documents.set()
+
+@dp.message_handler(state=Form.documents)
 async def ask_contact(message: types.Message, state: FSMContext):
     await state.update_data(documents=message.text)
-    await message.answer("8️⃣ Оставьте контакт для связи (телефон, Telegram, WhatsApp):")
-    await state.set_state(JobForm.contact)
+    user_data = await state.get_data()
+    lang = user_data.get("lang", "ru")
 
-@dp.message(JobForm.contact)
-async def form_complete(message: types.Message, state: FSMContext):
+    await message.answer(TEXTS[lang]['contact'])
+    await Form.contact.set()
+
+@dp.message_handler(state=Form.contact)
+async def finish_form(message: types.Message, state: FSMContext):
     await state.update_data(contact=message.text)
     data = await state.get_data()
+    lang = data.get("lang", "ru")
 
-    country_map = {
-        "nl_agro": "🇳🇱 Нидерланды — Сельское хозяйство",
-        "be_construction": "🇧🇪 Бельгия — Строительство"
-    }
-
-    result = (
-        "<b>📨 Новая анкета от кандидата</b>\n\n"
-        f"<b>Страна и направление:</b> {country_map.get(data['country'], '—')}\n"
-        f"<b>Дата приезда:</b> {data['arrival_date']}\n"
-        f"<b>Возраст:</b> {data['age']}\n"
-        f"<b>Гражданство:</b> {data['citizenship']}\n"
-        f"<b>Документы:</b> {data['documents']}\n"
-        f"<b>Контакт:</b> {data['contact']}"
+    # Формируем анкету
+    summary = (
+        f"📥 Новая анкета:\n\n"
+        f"🌍 Страна: {data['country']}\n"
+        f"📅 Дата прибытия: {data['arrival_date']}\n"
+        f"🎂 Возраст: {data['age']}\n"
+        f"🛂 Гражданство: {data['citizenship']}\n"
+        f"📄 Документы: {data['documents']}\n"
+        f"📞 Контакты: {data['contact']}"
     )
 
-    await bot.send_message(CHANNEL_ID, result)
-    await message.answer("✅ 9️⃣ Ваша анкета отправлена менеджерам. С вами свяжутся в течение 24 часов.")
-    await state.clear()
+    # Отправка в канал
+    await bot.send_message(CHANNEL_ID, summary)
 
-# === Запуск бота ===
-if __name__ == "__main__":
-    import asyncio
+    # Ответ пользователю
+    await message.answer(TEXTS[lang]['thank_you'])
+    await state.finish()
 
-    async def main():
-        await dp.start_polling(bot)
-
-    asyncio.run(main())
+# ----- Запуск -----
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)

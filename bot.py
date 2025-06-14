@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+BOT_TOKEN = "8133450666:AAHlxeZCDit8GO6t1oeVFA0N4ezeaFaTFGQ"
+CHANNEL_ID = "@Power_Flower_Applications"
 
 logging.basicConfig(level=logging.INFO)
 
